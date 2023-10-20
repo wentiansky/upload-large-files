@@ -17,6 +17,10 @@ function resolvePost(req) {
   })
 }
 
+function extractExt(filename) {
+  return filename.slice(filename.lastIndexOf('.'), filename.length)
+}
+
 /**
  * 写入文件流
  */
@@ -25,7 +29,7 @@ function pipeStream(filePath, writeStream) {
     const readStream = fse.createReadStream(filePath)
     readStream.on('end', () => {
       // 删除切片
-      fse.unlinkSync(filePath)
+      // fse.unlinkSync(filePath)
       resolve()
     })
     readStream.pipe(writeStream)
@@ -35,8 +39,8 @@ function pipeStream(filePath, writeStream) {
 /**
  * 合并切片
  */
-async function mergeChunk(filePath, filename, size) {
-  const chunkDir = path.resolve(UPLOAD_DIR, `chunkDir_${filename}`)
+async function mergeChunk(filePath, fileHash, size) {
+  const chunkDir = path.resolve(UPLOAD_DIR, `chunkDir_${fileHash}`)
   const chunkPaths = await fse.readdir(chunkDir)
   // 根据切片下标排序
   chunkPaths.sort((a, b) => a.split('-')[1] - b.split('-')[1])
@@ -78,9 +82,10 @@ server.on('request', async (req, res) => {
       }
       const chunk = files.chunk[0]
       const hash = fields.hash[0]
+      const fileHash = fields.fileHash[0]
       const filename = fields.filename[0]
       // 创建临时文件夹存储 chunk
-      const chunkDir = path.resolve(UPLOAD_DIR, `chunkDir_${filename}`)
+      const chunkDir = path.resolve(UPLOAD_DIR, `chunkDir_${fileHash}`)
       if (!fse.existsSync(chunkDir)) {
         await fse.mkdirs(chunkDir)
       }
@@ -89,11 +94,36 @@ server.on('request', async (req, res) => {
     })
   }
 
+  if (req.url === '/verify') {
+    const data = await resolvePost(req)
+    const { filename, fileHash } = data
+    const ext = extractExt(filename)
+    const filePath = path.resolve(UPLOAD_DIR, `${fileHash}${ext}`)
+    if (fse.existsSync(filePath)) {
+      res.end(
+        JSON.stringify({
+          code: 0,
+          isUpload: true,
+        })
+      )
+    } else {
+      res.end(
+        JSON.stringify({
+          code: 0,
+          isUpload: false,
+        })
+      )
+    }
+  }
+
   if (req.url === '/merge') {
     const data = await resolvePost(req)
-    const { filename, size } = data
-    const filePath = path.resolve(UPLOAD_DIR, filename)
-    await mergeChunk(filePath, filename, size)
+    const { filename, size, fileHash } = data
+    const filePath = path.resolve(
+      UPLOAD_DIR,
+      `${fileHash}${extractExt(filename)}`
+    )
+    await mergeChunk(filePath, fileHash, size)
     res.end(
       JSON.stringify({
         code: 0,
