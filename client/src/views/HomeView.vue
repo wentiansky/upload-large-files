@@ -61,7 +61,7 @@ const state = reactive<State>({
   status: 'wait',
   fakeUploadPercentage: 0
 })
-const SIZE = 1 * 1024 * 1024
+const SIZE = 1 * 1024 * 1024 // chunk size 1MB
 let controller: any = null
 
 const uploadPercent = computed(() => {
@@ -78,7 +78,6 @@ const uploadPercent = computed(() => {
 watch(
   () => uploadPercent.value,
   (val: any) => {
-    console.log('val: ', val)
     if (val > state.fakeUploadPercentage) {
       state.fakeUploadPercentage = val
     }
