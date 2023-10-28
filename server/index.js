@@ -21,6 +21,18 @@ function extractExt(filename) {
   return filename.slice(filename.lastIndexOf('.'), filename.length)
 }
 
+function getChunkDir(fileHash) {
+  return path.resolve(UPLOAD_DIR, `chunkDir_${fileHash}`)
+}
+
+async function createUploadedList(fileHash) {
+  const chunkDir = getChunkDir(fileHash)
+  if (fse.existsSync(chunkDir)) {
+    return await fse.readdir(chunkDir)
+  }
+  return []
+}
+
 /**
  * 写入文件流
  */
@@ -41,11 +53,13 @@ function pipeStream(filePath, writeStream) {
  */
 async function mergeChunk(filePath, fileHash, size) {
   const chunkDir = path.resolve(UPLOAD_DIR, `chunkDir_${fileHash}`)
-  const chunkPaths = await fse.readdir(chunkDir)
+  let chunkPaths = await fse.readdir(chunkDir)
+  chunkPaths = chunkPaths.filter((item) => item !== '.DS_Store')
   // 根据切片下标排序
   chunkPaths.sort((a, b) => a.split('-')[1] - b.split('-')[1])
+
   // 并发写入文件
-  await Promise.allSettled(
+  await Promise.all(
     chunkPaths.map((chunkPath, index) =>
       pipeStream(
         path.resolve(chunkDir, chunkPath),
@@ -111,6 +125,7 @@ server.on('request', async (req, res) => {
         JSON.stringify({
           code: 0,
           isUpload: false,
+          uploadedList: await createUploadedList(fileHash),
         })
       )
     }
