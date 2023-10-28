@@ -90,9 +90,29 @@ function handleFileChange(event: Event) {
   state.file = file
 }
 
-/**
- * 生成切片
- */
+async function handleUpload() {
+  if (!state.file) return
+  const chunkList = createFileChunk(state.file)
+  state.fileHash = await calculateHash(chunkList)
+  const { isUpload, uploadedList } = await verifyUpload(state.file.name, state.fileHash)
+  if (isUpload) {
+    ElMessage.success('文件已经上传')
+    return
+  }
+  state.data = chunkList.map(({ file }, index) => {
+    const hash = `${state.fileHash}-${index}`
+    return {
+      index,
+      chunk: file,
+      size: file.size,
+      hash,
+      fileHash: state.fileHash,
+      percentage: uploadedList.includes(hash) ? 100 : 0
+    }
+  })
+  await uploadChunk(uploadedList)
+}
+
 function createFileChunk(file: File, size = SIZE) {
   const chunkList = []
   let cur = 0
@@ -105,45 +125,30 @@ function createFileChunk(file: File, size = SIZE) {
   return chunkList
 }
 
-async function handleUpload() {
-  if (!state.file) return
-  const chunkList = createFileChunk(state.file)
-  state.fileHash = await calculateHash(chunkList)
-  const { isUpload, uploadedList } = await verifyUpload(state.file.name, state.fileHash)
-  if (isUpload) {
-    ElMessage.success('文件已经上传')
-    return
-  }
-  state.data = chunkList.map(({ file }, index) => {
-    return {
-      chunk: file,
-      hash: `${state.fileHash}-${index}`,
-      index,
-      percentage: uploadedList.includes(`${state.fileHash}-${index}`) ? 100 : 0,
-      size: file.size,
-      fileHash: state.fileHash
+function calculateHash(chunkList: any): Promise<string> {
+  return new Promise((resolve) => {
+    state.worker = new Worker('/hash.js')
+    state.worker.postMessage({
+      chunkList
+    })
+    state.worker.onmessage = (e) => {
+      const { percentage, hash } = e.data
+      state.hashPercentage = percentage
+      if (hash) {
+        resolve(hash)
+      }
     }
   })
-  await uploadChunk(uploadedList)
 }
 
-function handlePause() {
-  state.status = 'pause'
-  controller.abort()
-  if (state.worker) {
-    state.worker.onmessage = null
-  }
+async function verifyUpload(filename: string, fileHash: string) {
+  const { data } = await axios.post('http://localhost:3001/verify', {
+    filename,
+    fileHash
+  })
+  return data
 }
 
-async function handleResume() {
-  state.status = 'uploading'
-  const { uploadedList } = await verifyUpload(state.file!.name, state.fileHash)
-  await uploadChunk(uploadedList)
-}
-
-/**
- * 上传切片
- */
 async function uploadChunk(uploadedList = []) {
   controller = new AbortController()
   const requestList = state.data
@@ -152,8 +157,8 @@ async function uploadChunk(uploadedList = []) {
       const formData = new FormData()
       formData.append('chunk', chunk)
       formData.append('hash', hash)
-      formData.append('filename', state.file!.name)
       formData.append('fileHash', state.fileHash)
+      formData.append('filename', state.file!.name)
       return { formData, index }
     })
     .map(({ formData, index }) =>
@@ -180,33 +185,23 @@ function createProgressHandler(item: any) {
 function mergeRequest() {
   return axios.post('http://localhost:3001/merge', {
     filename: state.file?.name,
-    size: SIZE,
-    fileHash: state.fileHash
+    fileHash: state.fileHash,
+    size: SIZE
   })
 }
 
-async function verifyUpload(filename: string, fileHash: string) {
-  const { data } = await axios.post('http://localhost:3001/verify', {
-    filename,
-    fileHash
-  })
-  return data
+function handlePause() {
+  state.status = 'pause'
+  controller.abort()
+  if (state.worker) {
+    state.worker.onmessage = null
+  }
 }
 
-function calculateHash(chunkList: any): Promise<string> {
-  return new Promise((resolve) => {
-    state.worker = new Worker('/hash.js')
-    state.worker.postMessage({
-      chunkList
-    })
-    state.worker.onmessage = (e) => {
-      const { percentage, hash } = e.data
-      state.hashPercentage = percentage
-      if (hash) {
-        resolve(hash)
-      }
-    }
-  })
+async function handleResume() {
+  state.status = 'uploading'
+  const { uploadedList } = await verifyUpload(state.file!.name, state.fileHash)
+  await uploadChunk(uploadedList)
 }
 </script>
 
