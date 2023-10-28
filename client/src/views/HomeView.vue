@@ -6,13 +6,20 @@
     </div>
 
     <div>
+      <el-button v-if="state.status === 'pause'" type="primary" @click="handleResume"
+        >resume</el-button
+      >
+      <el-button v-else type="primary" @click="handlePause">pause</el-button>
+    </div>
+
+    <div>
       <span>chunk hash: </span>
       <el-progress :percentage="state.hashPercentage"></el-progress>
     </div>
 
     <div>
       <span>total percentage: </span>
-      <el-progress :percentage="uploadPercent"></el-progress>
+      <el-progress :percentage="state.fakeUploadPercentage"></el-progress>
     </div>
 
     <el-table :data="state.data">
@@ -32,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, computed } from 'vue'
+import { reactive, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import axios, { type AxiosProgressEvent } from 'axios'
 
@@ -42,15 +49,20 @@ interface State {
   worker: Worker | null
   hashPercentage: number
   fileHash: string
+  status: string
+  fakeUploadPercentage: number
 }
 const state = reactive<State>({
   file: null,
   data: [],
   worker: null,
   hashPercentage: 0,
-  fileHash: ''
+  fileHash: '',
+  status: 'wait',
+  fakeUploadPercentage: 0
 })
 const SIZE = 1 * 1024 * 1024
+let controller: any = null
 
 const uploadPercent = computed(() => {
   if (!state.file || !state.data.length) return 0
@@ -62,6 +74,16 @@ const uploadPercent = computed(() => {
   console.log('loaded: ', loaded)
   return parseInt((loaded / state.file.size).toFixed(2))
 })
+
+watch(
+  () => uploadPercent.value,
+  (val: any) => {
+    console.log('val: ', val)
+    if (val > state.fakeUploadPercentage) {
+      state.fakeUploadPercentage = val
+    }
+  }
+)
 
 function handleFileChange(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
@@ -88,7 +110,7 @@ async function handleUpload() {
   if (!state.file) return
   const chunkList = createFileChunk(state.file)
   state.fileHash = await calculateHash(chunkList)
-  const { isUpload } = await verifyUpload(state.file.name, state.fileHash)
+  const { isUpload, uploadedList } = await verifyUpload(state.file.name, state.fileHash)
   if (isUpload) {
     ElMessage.success('文件已经上传')
     return
@@ -98,19 +120,35 @@ async function handleUpload() {
       chunk: file,
       hash: `${state.fileHash}-${index}`,
       index,
-      percentage: 0,
+      percentage: uploadedList.includes(`${state.fileHash}-${index}`) ? 100 : 0,
       size: file.size,
       fileHash: state.fileHash
     }
   })
-  await uploadChunk()
+  await uploadChunk(uploadedList)
+}
+
+function handlePause() {
+  state.status = 'pause'
+  controller.abort()
+  if (state.worker) {
+    state.worker.onmessage = null
+  }
+}
+
+async function handleResume() {
+  state.status = 'uploading'
+  const { uploadedList } = await verifyUpload(state.file!.name, state.fileHash)
+  await uploadChunk(uploadedList)
 }
 
 /**
  * 上传切片
  */
-async function uploadChunk() {
+async function uploadChunk(uploadedList = []) {
+  controller = new AbortController()
   const requestList = state.data
+    .filter((item: any) => !uploadedList.includes(item.hash))
     .map(({ chunk, hash, index }) => {
       const formData = new FormData()
       formData.append('chunk', chunk)
@@ -124,10 +162,11 @@ async function uploadChunk() {
         headers: {
           'Content-Type': 'multipart/form-data'
         },
-        onUploadProgress: createProgressHandler(state.data[index])
+        onUploadProgress: createProgressHandler(state.data[index]),
+        signal: controller.signal
       })
     )
-  await Promise.allSettled(requestList)
+  await Promise.all(requestList)
   await mergeRequest()
 }
 
