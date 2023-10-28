@@ -24,11 +24,11 @@
 
     <el-table :data="state.data">
       <el-table-column prop="hash" label="chunk hash" align="center"></el-table-column>
-      <!-- <el-table-column label="size(KB)" align="center" width="120">
+      <el-table-column label="size(KB)" align="center" width="120">
         <template v-slot="{ row }">
-          {{ row.size | transformByte }}
+          {{ row.size / 1024 }}
         </template>
-      </el-table-column> -->
+      </el-table-column>
       <el-table-column label="percentage" align="center">
         <template v-slot="{ row }">
           <el-progress :percentage="row.percentage" color="#909399"></el-progress>
